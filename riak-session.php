@@ -17,7 +17,7 @@ function riak_session_close() {
 }
 
 function riak_session_read($id) {
-    global $riak_session_endpoint, $riak_session_bucket_name;
+    global $riak_session_endpoint, $riak_session_bucket;
 
     $ch = curl_init();
 
@@ -69,7 +69,7 @@ function riak_session_write($id, $data) {
      * I'm not sure though that if these are appearing in the php log.
      * Gotta try one day. */
 
-    global $riak_session_endpoint, $riak_session_bucket_name;
+    global $riak_session_endpoint, $riak_session_bucket;
 
     $ch = curl_init();
 
@@ -105,7 +105,7 @@ function riak_session_write($id, $data) {
 }
 
 function riak_session_destroy($id) {
-    global $riak_session_endpoint, $riak_session_bucket_name;
+    global $riak_session_endpoint, $riak_session_bucket;
 
     $ch = curl_init();
 

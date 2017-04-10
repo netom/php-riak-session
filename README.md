@@ -10,12 +10,23 @@ The session handler only works with one node, no failover capability is
 provided here. Use HaProxy or an application-local Riak node to increase
 availability.
 
-To use the library, simply include riak-session.php into your project.
+If you'd like to make use of the gc() method of the save handler, you
+have to configure Riak with a backend that supports secondary indexes.
+Alternatively, you can setup BitCask (for example) with expiry to
+automatically retire old sessions.
 
-Use the following global varialbes to fine-tune your application.
-Default values are also as they are below:
+## Usage
 
-    $riak_session_endpoint = 'http://127.0.0.1:8098';
-    $riak_session_bucket = 'session';
+Use composer to include 'netom/php-riak-session'.
 
-The n_val, r, and w parameters must be set on the bucket before use.
+Use the code below to register a riak session handler instance, and
+get the actual handler instance in a signle line:
+
+        $h = \Netom\Session\Riak::register();
+
+See the code for parameters.
+
+The default is to connect to the localhost, and to the 'default' bucket
+type, and 'session' bucket.
+
+The time() is stored to a t_int indexed field for every session.

@@ -2,25 +2,33 @@
 
 namespace Netom\Session;
 
+/**
+ * Session handler using Riak
+ * 
+ * Tested with Riak 2.2.3
+ */
 class Riak implements \SessionHandlerInterface {
 
     public
         $endpoint,
+        $bucketType,
         $bucket;
 
     public static function register(
         $endpoint = 'http://127.0.0.1:8098',
+        $bucketType = 'default',
         $bucket = 'session'
     )
     {
-        $h = new self($endpoint, $bucket);
+        $h = new self($endpoint, $bucketType, $bucket);
         session_set_save_handler($h, true);
         return $h;
     }
 
-    public function __construct($endpoint, $bucket)
+    public function __construct($endpoint, $bucketType, $bucket)
     {
         $this->endpoint = $endpoint;
+        $this->bucketType = $bucketType;
         $this->bucket = $bucket;
     }
 
@@ -34,41 +42,115 @@ class Riak implements \SessionHandlerInterface {
         $ch = curl_init();
 
         if ($ch === false) {
-            trigger_error(
-                "Riak session save handler: curl_init() returned FALSE.",
-                E_USER_ERROR
-            );
-            return false;
+            throw new \Exception("Riak session save handler: curl_init() returned FALSE.");
         }
 
         $options = array(
-            CURLOPT_URL => $this->endpoint . '/buckets/' . $this->buckets . '/keys/' . urlencode($session_id),
+            CURLOPT_URL =>
+                $this->endpoint .
+                '/types/' . $this->bucketType .
+                '/buckets/' . $this->bucket .
+                '/keys/' . urlencode($session_id),
             CURLOPT_CUSTOMREQUEST => "DELETE",
+            CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HEADER => false
         );
 
         if (curl_setopt_array($ch, $options) === false) {
-            trigger_error(
-                "Riak session save handler: curl_setopt_array() returned FALSE. Error message: " . curl_error($ch),
-                E_USER_ERROR
+            throw new \Exception(
+                "Riak session save handler: curl_setopt_array() returned FALSE. Error message: " . curl_error($ch)
             );
-            return false;
         }
 
-        if (curl_exec($ch)) {
-            return true;
-        } else {
-            trigger_error(
-                "Riak session save handler: curl_setopt_array() returned FALSE. Error message: " . curl_error($ch),
-                E_USER_ERROR
-            );
-            return false;
-        }
+        curl_exec($ch);
+        curl_close($ch);
+
+        return true;
     }
 
+    /**
+     * Garbage collection - remove old sessions
+     * 
+     * This method fetches all matching session IDs and then performs a delete, therefore it's slow.
+     * It's recommended to use other means to remove old sessions - like setting expiry with BitCask.
+     * 
+     * Pay attention to use the appropriate backend (like leveldb) that supports secondary indexes.
+     */
     public function gc($maxlifetime)
     {
-        return true;
+        $ch = curl_init();
+
+        if ($ch === false) {
+            throw new \Exception("Riak session save handler: curl_init() returned FALSE.");
+        }
+
+        $options = array(
+            CURLOPT_URL =>
+                $this->endpoint .
+                '/types/' . $this->bucketType .
+                '/buckets/' . $this->bucket .
+                '/index/t_int/0/' . (time() - $maxlifetime),
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HEADER => false
+        );
+
+        if (curl_setopt_array($ch, $options) === false) {
+            throw new \Exception(
+                "Riak session save handler: curl_setopt_array() returned FALSE. Error message: " . curl_error($ch)
+            );
+        }
+
+        $keysData = curl_exec($ch);
+
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+        curl_close($ch);
+
+        if ($http_code == 404) {
+            return true;
+        }
+
+        if ($http_code != 200) {
+            throw new \Exception(
+                "Riak session save handler: server returned " .
+                "error code $http_code upon querying expired session ids. " .
+                "The answer was: $keysData"
+            );
+        }
+
+        $keysArray = json_decode($keysData, true);
+
+        if ($keysArray === null)  {
+            throw new \Exception("Could not decode object returned by Riak: $keysJson");
+        }
+
+        foreach ($keysArray['keys'] as $session_id) {
+            $ch = curl_init();
+
+            if ($ch === false) {
+                throw new \Exception("Riak session save handler: curl_init() returned FALSE.");
+            }
+
+            $options = array(
+                CURLOPT_URL =>
+                    $this->endpoint .
+                    '/types/' . $this->bucketType .
+                    '/buckets/' . $this->bucket .
+                    '/keys/' . urlencode($session_id),
+                CURLOPT_CUSTOMREQUEST => "DELETE",
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_HEADER => false
+            );
+
+            if (curl_setopt_array($ch, $options) === false) {
+                throw new \Exception(
+                    "Riak session save handler: curl_setopt_array() returned FALSE. Error message: " . curl_error($ch)
+                );
+            }
+
+            curl_exec($ch);
+            curl_close($ch);
+        }
     }
 
     public function open($save_path, $session_name) {
@@ -85,41 +167,38 @@ class Riak implements \SessionHandlerInterface {
         $ch = curl_init();
 
         if ($ch === false) {
-            trigger_error(
-                "Riak session save handler: curl_init() returned FALSE.",
-                E_USER_ERROR
-            );
-            return '';
+            throw new \Exception("Riak session save handler: curl_init() returned FALSE.");
         }
 
         $options = array(
-            CURLOPT_URL => $this->endpoint . '/buckets/' . $this->bucket . '/keys/' . urlencode($session_id),
+            CURLOPT_URL =>
+                $this->endpoint .
+                '/types/' . $this->bucketType .
+                '/buckets/' . $this->bucket .
+                '/keys/' . urlencode($session_id),
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HEADER => false
         );
 
         if (curl_setopt_array($ch, $options) === false) {
-            trigger_error(
-                "Riak session save handler: curl_setopt_array() returned FALSE. Error message: " . curl_error($ch),
-                E_USER_ERROR
+            throw new \Exception(
+                "Riak session save handler: curl_setopt_array() returned FALSE. Error message: " . curl_error($ch)
             );
-            return '';
         }
 
-        $data = curl_exec($ch);
+        $session_data = curl_exec($ch);
 
         $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 
         curl_close($ch);
 
         if ($http_code == '200') {
-            return $data;
+            return $session_data;
         } else {
             if ($http_code != 404) {
-                trigger_error(
+                throw new \Exception(
                     "Riak session save handler: server returned " .
-                    "error code $http_code upon reading session id $session_id",
-                    E_USER_ERROR
+                    "error code $http_code upon reading session id $session_id"
                 );
             }
             return '';
@@ -128,40 +207,37 @@ class Riak implements \SessionHandlerInterface {
 
     public function write($session_id, $session_data)
     {
-        /* TODO: according to PHP docs, trigger_error messages are never seen
-         * because this function is called after the output stream is closed.
-         * I'm not sure though that if these are appearing in the php log.
-         * Gotta try one day. */
         $ch = curl_init();
 
         if ($ch === false) {
-            trigger_error(
-                "Riak session save handler: curl_init() returned FALSE.",
-                E_USER_ERROR
+            throw new \Exception(
+                "Riak session save handler: curl_init() returned FALSE."
             );
-            return false;
         }
 
-        $data = null;
         $options = array(
-            CURLOPT_URL => $this->endpoint . '/buckets/' . $this->bucket . '/keys/' . urlencode($session_id),
+            CURLOPT_URL =>
+                $this->endpoint .
+                '/types/' . $this->bucketType .
+                '/buckets/' . $this->bucket .
+                '/keys/' . urlencode($session_id),
             CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $data,
-            CURLOPT_HEADER => false
+            CURLOPT_POSTFIELDS => $session_data,
+            CURLOPT_HEADER => false,
+            CURLOPT_HTTPHEADER => [
+                'x-riak-index-t_int: ' . time()
+            ]
         );
 
         if (curl_setopt_array($ch, $options) === false) {
-            trigger_error(
-                "Riak session save handler: curl_setopt_array() returned FALSE. Error message: " . curl_error($ch),
-                E_USER_ERROR
+            throw new \Exception(
+                "Riak session save handler: curl_setopt_array() returned FALSE. Error message: " . curl_error($ch)
             );
-            return false;
         }
 
         if (!curl_exec($ch)) {
-            trigger_error(
-                "Riak session save handler: curl_setopt_array() returned FALSE. Error message: " . curl_error($ch),
-                E_USER_ERROR
+            throw new \Exception(
+                "Riak session save handler: curl_setopt_array() returned FALSE. Error message: " . curl_error($ch)
             );
         }
 
@@ -169,7 +245,7 @@ class Riak implements \SessionHandlerInterface {
     }
 }
 
-
+/*
 
 // Quick & dirty test
 
@@ -192,4 +268,4 @@ session_write_close();
 
 //$h->gc(-1);
 
-
+*/

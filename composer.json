@@ -1,0 +1,21 @@
+{
+    "name": "netom/php-riak-session",
+    "type": "library",
+    "description": "PHP session handler with Riak backend",
+    "keywords": ["session", "riak"],
+    "homepage": "https://github.com/netom/php-riak-session",
+    "license": "MIT",
+    "authors": [
+        {
+            "name":  "Fábián Tamás László",
+            "email": "giganetom@gmail.com"
+        }
+    ],
+    "require": {
+        "php":      ">=5.4.0",
+        "ext-curl": ">5"
+    },
+    "autoload": {
+        "psr-0": { "Netom\\Session": "src/" }
+    }
+}
